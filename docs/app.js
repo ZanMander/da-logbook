@@ -10,7 +10,7 @@ const CONFIG = {
   osrm: 'https://router.project-osrm.org',
   nominatim: 'https://nominatim.openstreetmap.org',
   estimateFactor: 1.25,            // straight line -> road estimate when routing is unavailable
-  version: '0.2.1'
+  version: '0.2.2'
 };
 const SITE_URL = location.origin + location.pathname;
 const PLACE_TYPES = [['home','Home'],['nwu','NWU'],['municipal_offices','Municipal offices'],['ward','Ward / constituency'],['other','Other']];

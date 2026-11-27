@@ -1,6 +1,6 @@
 # DA Logbook — setup and handover
 
-Version 0.2.1 · 27 Nov 2026
+Version 0.2.2 · 27 Nov 2026
 
 **App address: https://zanmander.github.io/da-logbook/**
 
@@ -12,7 +12,7 @@ Mobile web app for a DA councillor: SARS-shaped travel logbook (IRP5 3701 travel
 |---|---|
 | Database (Supabase project `da-logbook`, ref `nnwiuooawsyfspkqerhv`, org Hydranex, London, free tier) | Live. Migrations 001–007 applied. Security advisor: 0 findings. |
 | App code (`docs/`) | Complete. 50 automated checks pass (see Testing). **Not yet used on a real phone.** |
-| Hosting | **Live** on GitHub Pages from the `docs/` folder of the public repo `ZanMander/da-logbook`. A push to `main` redeploys in about a minute. |
+| Hosting | **Live** on GitHub Pages from the `docs/` folder of the public repo `ZanMander/da-logbook`. A push to `main` redeploys in about a minute, and the app picks the new version up the next time it is opened with signal. |
 | Owner account | Not created yet. The first account to register becomes the owner. |
 
 Checked in a real browser on 27 Nov 2026 at the live address: served as `text/html`, sign-in screen renders, no console errors, the database answers from that address, the routing and place-name services answer, the spreadsheet module loads, and the offline copy is stored. Checked from a desktop browser at phone width — not from a phone.
