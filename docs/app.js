@@ -10,7 +10,7 @@ const CONFIG = {
   osrm: 'https://router.project-osrm.org',
   nominatim: 'https://nominatim.openstreetmap.org',
   estimateFactor: 1.25,            // straight line -> road estimate when routing is unavailable
-  version: '0.3.0'
+  version: '0.3.1'
 };
 const SITE_URL = location.origin + location.pathname;
 const PLACE_TYPES = [['home','Home'],['nwu','NWU'],['municipal_offices','Municipal offices'],['ward','Ward / constituency'],['other','Other']];
@@ -64,14 +64,16 @@ const FORMS = {};   // form id -> submit handler; each section registers its own
 // ====================================================================
 // What the address carried when the app opened. After an email link, Supabase forwards here with either sign-in tokens
 // or an error in the address. An error is read and removed now; tokens are left for the client library to use.
-const LANDING = (() => {
+function readLanding(){
   const raw = (location.hash || '').replace(/^#/, ''); const q = new URLSearchParams(location.search);
   const p = /(^|&)(access_token|error|error_code|error_description)=/.test(raw) ? new URLSearchParams(raw) : new URLSearchParams();
   const err = p.get('error_description') || q.get('error_description') || p.get('error') || q.get('error');
   if (err) { try { history.replaceState(null, '', location.pathname); } catch (e) {} return { error: err, code: p.get('error_code') || q.get('error_code') || '' }; }
   if (p.get('access_token')) return { pending: true, type: p.get('type') || '' };
   return null;
-})();
+}
+const landingErrorText = l => /expired|invalid|denied/i.test(l.error+' '+l.code) ? 'That email link has expired or was already used. Sign in with your password, or ask for a new link.' : l.error.replace(/\+/g,' ');
+const LANDING = readLanding();
 const sb = supabase.createClient(CONFIG.url, CONFIG.key, { auth: { persistSession:true, autoRefreshToken:true, detectSessionInUrl:true } });
 const S = {
   user:null, ready:false, vehicles:[], vehicle:null, taxYears:[], params:[], categories:[], places:[],
@@ -211,7 +213,13 @@ async function loadLog(days=90){
 const VIEWS={home:'DA Logbook',log:'Log',expenses:'Expenses',export:'Export',settings:'Settings',trip:'Trip',task:'Task','task-start':'Start a task','task-manual':'Log a past task','task-detail':'Task',expense:'Expense',evidence:'Evidence'};
 const TOP=['home','log','expenses','export','settings'];
 function go(v){ if(location.hash!=='#'+v) location.hash='#'+v; else render(); }
-window.addEventListener('hashchange', ()=>render());
+window.addEventListener('hashchange', ()=>{
+  // An email link can also arrive in a tab that already has the app open: the address changes but the page does not reload.
+  const l=readLanding();
+  if(l && l.pending){ location.reload(); return; }                 // sign-in tokens: reload so the client library picks them up
+  if(l && l.error && !S.user){ AUTH.mode='signin'; AUTH.msg=landingErrorText(l); AUTH.msgKind='warn'; }
+  render();
+});
 $('#backBtn').addEventListener('click', ()=>{ if(history.length>1) history.back(); else go('home'); });
 function render(){
   const v=(location.hash||'#home').slice(1); S.view = VIEWS[v]?v:'home';
@@ -234,7 +242,7 @@ setInterval(tick, 1000);
 // The password typed at sign-up is held in memory only (AUTH.pending) so the app can finish signing in by itself once the
 // email is confirmed; it is never stored.
 const AUTH = { mode:'signin', email: ls.get('dalog.email',''), msg:'', msgKind:'warn', ownerClaimed:null, pending:null, resendAt:0, landed:false, lastTry:0 };
-if(LANDING && LANDING.error){ AUTH.landed=true; AUTH.msg = /expired|invalid|denied/i.test(LANDING.error+' '+LANDING.code) ? 'That email link has expired or was already used. Sign in with your password, or ask for a new link.' : LANDING.error.replace(/\+/g,' '); }
+if(LANDING && LANDING.error){ AUTH.landed=true; AUTH.msg=landingErrorText(LANDING); }
 function renderAuth(){
   const m=AUTH.mode, e=h(AUTH.email);
   const note=`<div id="authMsg" role="alert" class="${AUTH.msg?'banner '+(AUTH.msgKind==='ok'?'info':'warn'):''}">${h(AUTH.msg)}</div>`;

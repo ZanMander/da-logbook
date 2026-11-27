@@ -265,6 +265,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await s.page.goto(BASE + '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired'); await s.page.waitForSelector('#authEmail'); await s.ui.settle(500);
     check('an expired or used link shows a clear message on the sign-in screen', /expired or was already used/.test(await s.page.textContent('#authMsg')) && (await s.page.textContent('#authForm h3')) === 'Sign in', await s.page.textContent('#authMsg'));
     check('the error is removed from the address', !/error/.test(s.page.url()), s.page.url());
+    // the same link arriving in a tab that already has the app open: the address changes but the page does not reload
+    await s.page.evaluate(() => { AUTH.msg = ''; location.hash = '#home'; }); await s.ui.settle(300);
+    await s.page.evaluate(() => { location.hash = '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired'; }); await s.ui.settle(400);
+    check('the same message appears when the link arrives in an already-open tab', /expired or was already used/.test(await s.page.textContent('#authMsg')) && !/error/.test(s.page.url()), (await s.page.textContent('#authMsg')) + ' | ' + s.page.url());
+    const tok2 = s.mock.session(); await s.page.evaluate(t => { location.hash = `#access_token=${t.access_token}&expires_in=3600&refresh_token=${t.refresh_token}&token_type=bearer&type=signup`; }, tok2);
+    await s.page.waitForSelector('[data-action="startTrip"]', { timeout: 8000 });
+    check('sign-in tokens arriving in an already-open tab also sign in', (await s.ui.text()).includes('Start work trip') && !/access_token/.test(s.page.url()), s.page.url());
+    await s.page.goto(BASE + '#settings'); await s.page.waitForSelector('[data-action="signOut"]'); await s.page.click('[data-action="signOut"]'); await s.page.waitForSelector('#authEmail'); await s.ui.settle(300);
     console.log('Forgot password');
     await s.page.click('[data-mode="forgot"]'); await s.page.waitForSelector('#forgotForm'); await s.page.fill('#authEmail', 'test@example.com'); await s.page.click('#forgotForm button[type=submit]'); await s.ui.settle(500);
     check('Forgot password sends one request and shows Check your email', s.mock.state.recoveries.length === 1 && /Check your email/.test(await s.ui.text()) && /test@example\.com/.test(await s.ui.text()));
