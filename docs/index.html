@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://nnwiuooawsyfspkqerhv.supabase.co; connect-src 'self' https://nnwiuooawsyfspkqerhv.supabase.co https://router.project-osrm.org https://nominatim.openstreetmap.org; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#0B5FB0">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="DA Logbook">
+<meta name="referrer" content="strict-origin">
+<meta name="robots" content="noindex,nofollow">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<title>DA Logbook</title>
+<style>
+/* Layout: one-column app shell — sticky header, scrolling main, fixed bottom nav. Home is action-first: large start buttons.
+   Type: the phone's own UI face (no web-font download on mobile data); monospace digits for km, rand and timers. */
+:root{
+  --bg:#F3F5F8; --surface:#FFFFFF; --fg:#131A22; --muted:#5C6773; --line:#DCE2E9;
+  --accent:#0B5FB0; --accent-fg:#FFFFFF; --accent-soft:#E4EEF9;
+  --task:#0E7A5B; --task-fg:#FFFFFF; --task-soft:#DFF2EA; --personal:#55606C; --personal-soft:#E8EBEF;
+  --warn:#A8520A; --warn-soft:#FBEBDD; --danger:#B42323; --danger-soft:#FAE3E3; --ok:#1F7A3A;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Roboto Mono",monospace;
+  --radius:14px; --nav-h:62px; --shadow:0 1px 2px rgba(10,20,40,.06),0 4px 14px rgba(10,20,40,.05);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F141A; --surface:#171E27; --fg:#E8EDF2; --muted:#98A5B3; --line:#263140;
+    --accent:#4D9BE6; --accent-fg:#06192B; --accent-soft:#16304B;
+    --task:#3FBF8F; --task-fg:#06231A; --task-soft:#123627; --personal:#A3AEBA; --personal-soft:#232C37;
+    --warn:#E39A4E; --warn-soft:#3A2812; --danger:#F07171; --danger-soft:#3C1A1A; --ok:#5CC27A;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.3);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F141A; --surface:#171E27; --fg:#E8EDF2; --muted:#98A5B3; --line:#263140;
+  --accent:#4D9BE6; --accent-fg:#06192B; --accent-soft:#16304B;
+  --task:#3FBF8F; --task-fg:#06231A; --task-soft:#123627; --personal:#A3AEBA; --personal-soft:#232C37;
+  --warn:#E39A4E; --warn-soft:#3A2812; --danger:#F07171; --danger-soft:#3C1A1A; --ok:#5CC27A;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.3);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 var(--font);-webkit-font-smoothing:antialiased;overscroll-behavior-y:none;-webkit-text-size-adjust:100%}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);background:var(--surface);z-index:30}
+#app{min-height:100%;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--surface);border-bottom:1px solid var(--line);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px;display:flex;align-items:center;gap:10px}
+header.top h1{font-size:17px;margin:0;font-weight:700;letter-spacing:-.01em;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header.top .back{background:none;border:0;color:var(--accent);font:inherit;font-weight:600;padding:6px 8px 6px 0;cursor:pointer}
+.sync{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.sync i{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+.sync.off i,.sync.queued i{background:var(--warn)}
+main{flex:1;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:14px calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 20px);max-width:640px;width:100%;margin:0 auto}
+nav.bottom{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--line);
+  padding-left:max(8px,env(safe-area-inset-left,0px));padding-right:max(8px,env(safe-area-inset-right,0px));padding-bottom:env(safe-area-inset-bottom,0px);display:flex}
+nav.bottom a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;height:var(--nav-h);text-decoration:none;color:var(--muted);font-size:11px;font-weight:500;border-radius:10px}
+nav.bottom a.active{color:var(--accent)}
+nav.bottom a svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.stack{display:flex;flex-direction:column;gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow)}
+.card.tight{padding:10px 12px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;font-weight:600}
+.card h3{margin:0 0 6px;font-size:16px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.row>*{min-width:0}
+.grow{flex:1}
+.push{margin-left:auto}
+.muted{color:var(--muted)} .small{font-size:12.5px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600}
+.btn{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--fg);font:inherit;font-weight:600;border-radius:12px;padding:12px 16px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;text-decoration:none;touch-action:manipulation}
+.btn:focus-visible,.input:focus-visible,select:focus-visible,textarea:focus-visible,.chip:focus-visible{outline:3px solid var(--accent);outline-offset:1px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.btn.task{background:var(--task);border-color:var(--task);color:var(--task-fg)}
+.btn.personal{background:var(--personal-soft);border-color:var(--personal-soft);color:var(--fg)}
+.btn.danger{background:var(--danger-soft);border-color:var(--danger-soft);color:var(--danger)}
+.btn.ghost{background:transparent}
+.btn.block{width:100%}
+.btn.xl{min-height:72px;font-size:19px;border-radius:16px}
+.btn.small{min-height:36px;padding:6px 12px;font-size:13px;border-radius:10px}
+.btn:disabled{opacity:.55;cursor:default}
+.btn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid2>*{min-width:0}
+@media (max-width:360px){.grid2{grid-template-columns:1fr}}
+label.f{display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:500;color:var(--muted)}
+.input,select,textarea{font:inherit;font-size:16px;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:11px 12px;width:100%;min-height:44px}
+textarea{min-height:80px;resize:vertical}
+.input.num{font-family:var(--mono)}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:999px;padding:7px 12px;font:inherit;font-size:13px;cursor:pointer;touch-action:manipulation}
+.pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11.5px;font-weight:600;letter-spacing:.02em}
+.pill.work{background:var(--accent-soft);color:var(--accent)}
+.pill.personal{background:var(--personal-soft);color:var(--personal)}
+.pill.task{background:var(--task-soft);color:var(--task)}
+.pill.expense,.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.list{display:flex;flex-direction:column}
+.item{display:flex;gap:12px;padding:11px 0;border-top:1px solid var(--line);align-items:flex-start}
+.item:first-child{border-top:0}
+.item .t{font-weight:600}
+.item .r{margin-left:auto;text-align:right;flex:none}
+[data-action]{cursor:pointer}
+.datehead{font-size:12.5px;font-weight:600;color:var(--muted);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.05em}
+.active-card{border-left:5px solid var(--accent)}
+.active-card.task{border-left-color:var(--task)}
+.active-card.personal{border-left-color:var(--personal)}
+.timer{font-family:var(--mono);font-size:34px;font-weight:600;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums}
+.banner{border-radius:12px;padding:10px 12px;font-size:13.5px}
+.banner.warn{background:var(--warn-soft);color:var(--warn)}
+.banner.info{background:var(--accent-soft);color:var(--accent)}
+.banner.danger{background:var(--danger-soft);color:var(--danger)}
+.banner a{color:inherit;font-weight:600}
+.kv{display:grid;grid-template-columns:1fr auto;gap:6px 14px;font-size:14px;margin:0}
+.kv dt{color:var(--muted)} .kv dd{margin:0;text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.kv dd.text{font-family:var(--font)}
+.toast{position:fixed;left:50%;bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 14px);transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;z-index:70;max-width:92vw;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
+.busy{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px}
+.busy>div{background:var(--surface);color:var(--fg);padding:18px 20px;border-radius:14px;font-weight:600;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px;align-items:center;text-align:center;max-width:320px}
+.busy p{margin:0}
+.auth{max-width:380px;margin:40px auto}
+.auth h1{font-size:26px;margin:0 0 4px;letter-spacing:-.02em}
+.evlist{display:flex;flex-direction:column;gap:6px}
+.ev{display:flex;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px;font-size:13.5px}
+.ev img{width:44px;height:44px;object-fit:cover;border-radius:8px;flex:none;background:var(--line)}
+.sheet{position:fixed;inset:auto 0 0 0;background:var(--surface);border-radius:18px 18px 0 0;padding:16px max(16px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));z-index:45;box-shadow:0 -10px 30px rgba(0,0,0,.25);max-height:85vh;overflow:auto}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:44}
+pre.copy{white-space:pre-wrap;font:13px/1.45 var(--font);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;margin:0;overflow-wrap:anywhere}
+h2.page{font-size:18px;margin:6px 0 2px;letter-spacing:-.01em}
+a{color:var(--accent)}
+noscript{display:block;padding:24px;text-align:center}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top"><button class="back" id="backBtn" type="button" hidden>‹ Back</button><h1 id="title">DA Logbook</h1><span class="sync" id="sync"><i></i><span>online</span></span></header>
+  <main id="main"><p class="muted">Loading…</p></main>
+  <nav class="bottom" id="nav" aria-label="Sections">
+    <a href="#home" data-v="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/></svg>Home</a>
+    <a href="#log" data-v="log"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Log</a>
+    <a href="#expenses" data-v="expenses"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>Expenses</a>
+    <a href="#export" data-v="export"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4"/><path d="M4 17v3h16v-3"/></svg>Export</a>
+    <a href="#settings" data-v="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 0 0 5 12a7 7 0 0 0 .1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 2 1.2l.4 2.6h4.4l.4-2.6a7 7 0 0 0 2-1.2l2.3.9 2-3.4-2-1.5A7 7 0 0 0 19 12z"/></svg>Settings</a>
+  </nav>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<noscript>DA Logbook needs JavaScript switched on.</noscript>
+<script src="./vendor/supabase.min.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

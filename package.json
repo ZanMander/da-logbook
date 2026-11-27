@@ -1,0 +1,8 @@
+{
+  "name": "da-logbook",
+  "version": "0.2.0",
+  "private": true,
+  "description": "SARS travel logbook and proof-of-work record for a DA councillor (static PWA on Supabase)",
+  "scripts": { "test": "node test/e2e.js", "serve": "npx --yes serve docs" },
+  "devDependencies": { "playwright": "^1.50.0", "xlsx": "0.18.5" }
+}

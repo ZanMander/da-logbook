@@ -1,0 +1,16 @@
+{
+  "name": "DA Logbook",
+  "short_name": "DA Logbook",
+  "description": "SARS travel logbook and proof-of-work record for a DA councillor",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F3F5F8",
+  "theme_color": "#0B5FB0",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
