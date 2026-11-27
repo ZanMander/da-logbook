@@ -10,7 +10,7 @@ const CONFIG = {
   osrm: 'https://router.project-osrm.org',
   nominatim: 'https://nominatim.openstreetmap.org',
   estimateFactor: 1.25,            // straight line -> road estimate when routing is unavailable
-  version: '0.2.0'
+  version: '0.2.1'
 };
 const SITE_URL = location.origin + location.pathname;
 const PLACE_TYPES = [['home','Home'],['nwu','NWU'],['municipal_offices','Municipal offices'],['ward','Ward / constituency'],['other','Other']];
@@ -151,7 +151,10 @@ async function placeName(fix){
   const p=nearestPlace(fix); if(p) return p.name;
   if(!navigator.onLine) return fmtCoord(fix);
   try{ const r=await fetch(`${CONFIG.nominatim}/reverse?format=jsonv2&lat=${fix.lat}&lon=${fix.lng}&zoom=17`,{signal:timeoutSignal(8000),headers:{Accept:'application/json'}}); const j=await r.json(); const a=j.address||{};
-    const parts=[a.amenity||a.building||a.shop||a.office, a.road||a.pedestrian, a.suburb||a.neighbourhood||a.hamlet||a.village, a.city||a.town||a.municipality].filter(Boolean);
+    // The map data labels some areas with old municipal ward numbers ("Tlokwe Ward 24"). A wrong ward number in a
+    // councillor's logbook is worse than none, so ward-style labels are dropped.
+    const notWard = s => s && !/\bward\s*\d+/i.test(s) ? s : null;
+    const parts=[a.amenity||a.building||a.shop||a.office, a.road||a.pedestrian, notWard(a.suburb)||notWard(a.neighbourhood)||a.hamlet||a.village, a.city||a.town||a.municipality].filter(Boolean);
     const name=[...new Set(parts)].join(', '); return name || j.display_name || fmtCoord(fix);
   }catch(e){ return fmtCoord(fix); }
 }

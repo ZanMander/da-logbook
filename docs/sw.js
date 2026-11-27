@@ -1,6 +1,6 @@
 // DA Logbook service worker: keeps the app shell on the phone so it opens without signal.
 // Only same-origin GET requests for the app's own files are handled. API traffic is never touched.
-const VERSION = 'dalog-v0.2.0';
+const VERSION = 'dalog-v0.2.1';
 const SHELL = ['./', './index.html', './app.js', './vendor/supabase.min.js', './vendor/xlsx.mini.min.js', './manifest.webmanifest', './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png'];
 const BASE = new URL('./', self.location.href).pathname;
 

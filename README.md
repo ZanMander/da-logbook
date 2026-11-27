@@ -1,6 +1,8 @@
 # DA Logbook — setup and handover
 
-Version 0.2 · 25 Nov 2026 · supersedes the note written earlier the same day
+Version 0.2.1 · 27 Nov 2026
+
+**App address: https://zanmander.github.io/da-logbook/**
 
 Mobile web app for a DA councillor: SARS-shaped travel logbook (IRP5 3701 travel allowance), section 8(1)(d) expenses (3708 public office allowance), timed DA task sessions that close only with evidence, and exports for SARS and for performance review.
 
@@ -9,17 +11,20 @@ Mobile web app for a DA councillor: SARS-shaped travel logbook (IRP5 3701 travel
 | Part | State |
 |---|---|
 | Database (Supabase project `da-logbook`, ref `nnwiuooawsyfspkqerhv`, org Hydranex, London, free tier) | Live. Migrations 001–007 applied. Security advisor: 0 findings. |
-| App code (`docs/`) | Complete. 49 automated checks pass (see Testing). **Not yet used on a real phone.** |
-| Hosting | **Not live yet.** Chosen host: GitHub Pages, from the `docs/` folder of a public repo `da-logbook`. Waiting for the repo to exist. |
+| App code (`docs/`) | Complete. 50 automated checks pass (see Testing). **Not yet used on a real phone.** |
+| Hosting | **Live** on GitHub Pages from the `docs/` folder of the public repo `ZanMander/da-logbook`. A push to `main` redeploys in about a minute. |
+| Owner account | Not created yet. The first account to register becomes the owner. |
+
+Checked in a real browser on 27 Nov 2026 at the live address: served as `text/html`, sign-in screen renders, no console errors, the database answers from that address, the routing and place-name services answer, the spreadsheet module loads, and the offline copy is stored. Checked from a desktop browser at phone width — not from a phone.
 
 ### Correction to the first handover note
 
-The first note gave `https://nnwiuooawsyfspkqerhv.supabase.co/functions/v1/app/` as a working app address. It never worked: Supabase delivers HTML from Edge Functions as `text/plain` unless the project has a paid custom domain, so a browser showed the page source. The deployed files were checked byte for byte; how a browser would render them was not. That address now returns a one-line notice and will forward to the real address once there is one.
+The first note gave `https://nnwiuooawsyfspkqerhv.supabase.co/functions/v1/app/` as a working app address. It never worked: Supabase delivers HTML from Edge Functions as `text/plain` unless the project has a paid custom domain, so a browser showed the page source. The deployed files were checked byte for byte; how a browser would render them was not. That address now forwards to the app address above.
 
-## First run (once hosted)
+## First run
 
 1. Open the address on the phone (Safari on iPhone, Chrome on Android) → Share → **Add to Home Screen**. Use it from the icon.
-2. **Create account** (email + password, 8+ characters). The first account becomes the owner; after that sign-ups are closed. Supabase sends a confirmation email — tap its link, then sign in. If the mail does not arrive or its link lands on an error page, the account can be confirmed from the Supabase side instead.
+2. **Create account** (email + password, 8+ characters). The first account becomes the owner; after that sign-ups are closed. Supabase sends a confirmation email — tap its link, then sign in. Until the Site URL in the Supabase dashboard (Authentication → URL Configuration) is set to the app address, that link confirms the account but lands on an error page; that is harmless. If the mail does not arrive, the account can be confirmed from the Supabase side instead.
 3. **Settings → Vehicle**: name, registration, value when acquired, maintenance-plan and fuel flags.
 4. **Settings → Tax year**: opening odometer, the date and proof of that reading, the 3701 and 3708 amounts, months of business use.
 5. **Settings → Named places**: stand at home, NWU and the municipal offices and tap each button. This is how a commute is told apart from a business trip.

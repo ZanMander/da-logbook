@@ -24,7 +24,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR_INTERNET_DISCONNECTED|ERR_FAILED/.test(m.text())) errors.push('console: ' + m.text()); });
     await ctx.route(/supabase\.co/, mock.handle);
     await ctx.route(/router\.project-osrm\.org/, r => mock.state.offline ? r.abort('internetdisconnected') : r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ code: 'Ok', routes: [{ distance: 4321 }] }) }));
-    await ctx.route(/nominatim\.openstreetmap\.org/, r => mock.state.offline ? r.abort('internetdisconnected') : r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ address: { road: 'Wolmarans St', suburb: 'Potchefstroom Central', city: 'Potchefstroom' } }) }));
+    await ctx.route(/nominatim\.openstreetmap\.org/, r => mock.state.offline ? r.abort('internetdisconnected') : r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ address: { road: 'Wolmarans St', suburb: 'Tlokwe Ward 24', neighbourhood: 'Potchefstroom Central', city: 'Potchefstroom' } }) }));   // suburb as the live service really returns it
     page.on('request', r => { const h = new URL(r.url()).hostname; if (!/^(localhost|nnwiuooawsyfspkqerhv\.supabase\.co|router\.project-osrm\.org|nominatim\.openstreetmap\.org)$/.test(h) && !r.url().startsWith('blob:') && !r.url().startsWith('data:')) stray.push(r.url()); });
     const ui = {
       text: async () => (await page.textContent('#main')).replace(/\s+/g, ' ').trim(),
@@ -67,7 +67,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await ui.act('stopTrip'); await page.waitForSelector('#tripForm'); await ui.settle();
     t = st.trips[0];
     check('stop: both pins and measured km are on the server before the form is saved', t.status === 'active' && !!t.ended_at && t.end_lat === -26.69 && t.routed_km === 4.3 && t.km_source === 'osrm', JSON.stringify({ s: t.status, e: t.ended_at, r: t.routed_km }));
-    check('stop: From is the named place and typed as home; To is reverse-geocoded', (await page.inputValue('#from_text')) === 'Home' && (await page.inputValue('#origin_type')) === 'home' && /Wolmarans St/.test(await page.inputValue('#to_text')));
+    check('stop: From is the named place and typed as home; To is reverse-geocoded', (await page.inputValue('#from_text')) === 'Home' && (await page.inputValue('#origin_type')) === 'home' && (await page.inputValue('#to_text')) === 'Wolmarans St, Potchefstroom Central, Potchefstroom', await page.inputValue('#to_text'));
+    check('stop: out-of-date ward labels from the map data are kept out of the place name', !/ward\s*\d/i.test(await page.inputValue('#to_text')));
     await page.click('#tripForm button[type=submit]'); await ui.settle();
     check('save without a reason is refused in the app', /SARS needs the reason/.test(await ui.toast()) && st.trips[0].status === 'active', await ui.toast());
     await page.fill('#reason', 'Ward 10 site visit'); await page.click('#tripForm button[type=submit]'); await page.waitForSelector('[data-action="startTrip"]'); await ui.settle();
