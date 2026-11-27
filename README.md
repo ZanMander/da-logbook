@@ -1,6 +1,6 @@
 # DA Logbook — setup and handover
 
-Version 0.2.2 · 27 Nov 2026
+Version 0.3.0 · 27 Nov 2026
 
 **App address: https://zanmander.github.io/da-logbook/**
 
@@ -10,10 +10,11 @@ Mobile web app for a DA councillor: SARS-shaped travel logbook (IRP5 3701 travel
 
 | Part | State |
 |---|---|
-| Database (Supabase project `da-logbook`, ref `nnwiuooawsyfspkqerhv`, org Hydranex, London, free tier) | Live. Migrations 001–007 applied. Security advisor: 0 findings. |
-| App code (`docs/`) | Complete. 50 automated checks pass (see Testing). **Not yet used on a real phone.** |
+| Database (Supabase project `da-logbook`, ref `nnwiuooawsyfspkqerhv`, org Hydranex, London, free tier) | Live. Migrations 001–008 applied. Security advisor: 0 findings. |
+| App code (`docs/`) | Complete. 75 automated checks pass (see Testing). **Not yet used on a real phone.** |
 | Hosting | **Live** on GitHub Pages from the `docs/` folder of the public repo `ZanMander/da-logbook`. A push to `main` redeploys in about a minute, and the app picks the new version up the next time it is opened with signal. |
-| Owner account | Not created yet. The first account to register becomes the owner. |
+| Owner account | Created and confirmed on 27 Nov 2026. New sign-ups are closed. |
+| Email links | **One setting outstanding.** Until the Site URL in the Supabase dashboard points at the app, links in Supabase emails (confirm, reset password) do their job and then forward to `localhost:3000`, an error page. See "Account screens". |
 
 Checked in a real browser on 27 Nov 2026 at the live address: served as `text/html`, sign-in screen renders, no console errors, the database answers from that address, the routing and place-name services answer, the spreadsheet module loads, and the offline copy is stored. Checked from a desktop browser at phone width — not from a phone.
 
@@ -24,11 +25,29 @@ The first note gave `https://nnwiuooawsyfspkqerhv.supabase.co/functions/v1/app/`
 ## First run
 
 1. Open the address on the phone (Safari on iPhone, Chrome on Android) → Share → **Add to Home Screen**. Use it from the icon.
-2. **Create account** (email + password, 8+ characters). The first account becomes the owner; after that sign-ups are closed. Supabase sends a confirmation email — tap its link, then sign in. Until the Site URL in the Supabase dashboard (Authentication → URL Configuration) is set to the app address, that link confirms the account but lands on an error page; that is harmless. If the mail does not arrive, the account can be confirmed from the Supabase side instead.
+2. **Sign in** with the owner's email and password. A phone's home-screen app keeps its own sign-in, separate from the browser, so sign in once there; it then stays signed in.
 3. **Settings → Vehicle**: name, registration, value when acquired, maintenance-plan and fuel flags.
 4. **Settings → Tax year**: opening odometer, the date and proof of that reading, the 3701 and 3708 amounts, months of business use.
 5. **Settings → Named places**: stand at home, NWU and the municipal offices and tap each button. This is how a commute is told apart from a business trip.
 6. Allow location when asked.
+
+Home shows a three-item setup checklist until steps 3 to 5 are done.
+
+## Account screens
+
+- **Sign in.** Email (remembered on the device) and password, with Show/Hide. Wrong details get one plain sentence. Once an owner exists, creating an account is no longer offered.
+- **Create the owner account.** Offered only while no account exists. After sign-up the app shows **Confirm your email** with the address, a button to continue, and a button to send the email again (one per minute; the built-in mail service also caps the project at a few emails an hour, which the app explains if it is hit). When you return to the app after tapping the link, it signs in by itself. The password typed at sign-up is held in memory for that purpose and never stored.
+- **Forgot password.** Sends a reset link. Opening it shows **Choose a new password**, then goes to Home.
+- **Links that open the app.** A confirmation link signs you in directly. An expired or already-used link shows a clear message on the sign-in screen and is removed from the address.
+
+### The one setting these depend on
+
+Supabase decides where its email links end up. The project still has the default (`http://localhost:3000`), so a link confirms the account or authorises the reset and then forwards to an error page. In the Supabase dashboard, under Authentication → URL Configuration:
+
+- **Site URL:** `https://zanmander.github.io/da-logbook/`
+- **Redirect URLs:** add `https://zanmander.github.io/da-logbook/**`
+
+Until then: confirming an account still works (tap the link, ignore the error page, return to the app), but **a password reset cannot be completed**. The password can always be changed while signed in, under Settings → Account.
 
 ## What it does
 

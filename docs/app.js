@@ -10,7 +10,7 @@ const CONFIG = {
   osrm: 'https://router.project-osrm.org',
   nominatim: 'https://nominatim.openstreetmap.org',
   estimateFactor: 1.25,            // straight line -> road estimate when routing is unavailable
-  version: '0.2.2'
+  version: '0.3.0'
 };
 const SITE_URL = location.origin + location.pathname;
 const PLACE_TYPES = [['home','Home'],['nwu','NWU'],['municipal_offices','Municipal offices'],['ward','Ward / constituency'],['other','Other']];
@@ -57,10 +57,21 @@ function busy(msg, action){
 }
 // Wraps handlers so a rejected write shows its message instead of failing silently.
 const guard = fn => async (...a) => { try { await fn(...a); } catch(e){ console.error(e); busy(null); toast(e && e.message ? e.message : String(e), 5000); } };
+const FORMS = {};   // form id -> submit handler; each section registers its own
 
 // ====================================================================
 // SUPABASE + STATE
 // ====================================================================
+// What the address carried when the app opened. After an email link, Supabase forwards here with either sign-in tokens
+// or an error in the address. An error is read and removed now; tokens are left for the client library to use.
+const LANDING = (() => {
+  const raw = (location.hash || '').replace(/^#/, ''); const q = new URLSearchParams(location.search);
+  const p = /(^|&)(access_token|error|error_code|error_description)=/.test(raw) ? new URLSearchParams(raw) : new URLSearchParams();
+  const err = p.get('error_description') || q.get('error_description') || p.get('error') || q.get('error');
+  if (err) { try { history.replaceState(null, '', location.pathname); } catch (e) {} return { error: err, code: p.get('error_code') || q.get('error_code') || '' }; }
+  if (p.get('access_token')) return { pending: true, type: p.get('type') || '' };
+  return null;
+})();
 const sb = supabase.createClient(CONFIG.url, CONFIG.key, { auth: { persistSession:true, autoRefreshToken:true, detectSessionInUrl:true } });
 const S = {
   user:null, ready:false, vehicles:[], vehicle:null, taxYears:[], params:[], categories:[], places:[],
@@ -204,11 +215,12 @@ window.addEventListener('hashchange', ()=>render());
 $('#backBtn').addEventListener('click', ()=>{ if(history.length>1) history.back(); else go('home'); });
 function render(){
   const v=(location.hash||'#home').slice(1); S.view = VIEWS[v]?v:'home';
-  $('#title').textContent=VIEWS[S.view]; $('#backBtn').hidden = TOP.includes(S.view) || !S.user;
-  $('#nav').hidden=!S.user;
+  const account = !S.user || AUTH.mode==='newPassword';          // the account screens replace the app until signed in
+  $('#title').textContent = account ? 'DA Logbook' : VIEWS[S.view]; $('#backBtn').hidden = TOP.includes(S.view) || account;
+  $('#nav').hidden=account;
   $$('#nav a').forEach(a=>a.classList.toggle('active', a.dataset.v===S.view));
   window.scrollTo(0,0);
-  if(!S.user){ $('#main').innerHTML=renderAuth(); return; }
+  if(account){ $('#main').innerHTML=renderAuth(); return; }
   ({home:renderHome, log:renderLog, expenses:renderExpenses, export:renderExport, settings:renderSettings, trip:renderTripForm, 'task-start':renderTaskStart, 'task-manual':renderTaskManual, task:renderTaskActive, 'task-detail':renderTaskDetail, expense:renderExpenseForm, evidence:renderEvidenceForm})[S.view]();
   renderSync(); tick();
 }
@@ -218,32 +230,130 @@ setInterval(tick, 1000);
 // ====================================================================
 // AUTH
 // ====================================================================
-function renderAuth(){ return `
-  <div class="auth stack">
-    <div><h1>DA Logbook</h1><p class="muted">Travel log and proof of work. Sign in to continue.</p></div>
-    <form id="authForm" class="stack card" novalidate>
-      <label class="f">Email<input class="input" type="email" id="authEmail" autocomplete="username" inputmode="email" autocapitalize="none"></label>
-      <label class="f">Password<input class="input" type="password" id="authPass" autocomplete="current-password"></label>
+// Screens: signin · create · confirm (waiting for the email link) · forgot · forgotSent · newPassword (after a reset link).
+// The password typed at sign-up is held in memory only (AUTH.pending) so the app can finish signing in by itself once the
+// email is confirmed; it is never stored.
+const AUTH = { mode:'signin', email: ls.get('dalog.email',''), msg:'', msgKind:'warn', ownerClaimed:null, pending:null, resendAt:0, landed:false, lastTry:0 };
+if(LANDING && LANDING.error){ AUTH.landed=true; AUTH.msg = /expired|invalid|denied/i.test(LANDING.error+' '+LANDING.code) ? 'That email link has expired or was already used. Sign in with your password, or ask for a new link.' : LANDING.error.replace(/\+/g,' '); }
+function renderAuth(){
+  const m=AUTH.mode, e=h(AUTH.email);
+  const note=`<div id="authMsg" role="alert" class="${AUTH.msg?'banner '+(AUTH.msgKind==='ok'?'info':'warn'):''}">${h(AUTH.msg)}</div>`;
+  const emailField=`<label class="f">Email<input class="input" type="email" id="authEmail" name="email" value="${e}" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false"></label>`;
+  const pwField=(id,ac,label)=>`<label class="f">${label}<span class="pw"><input class="input" type="password" id="${id}" name="password" autocomplete="${ac}" autocapitalize="none" spellcheck="false"><button type="button" class="btn small" data-auth="togglePw" aria-pressed="false" aria-label="Show password">Show</button></span></label>`;
+  const head=`<div><h1>DA Logbook</h1><p class="muted">Travel log and proof of work.</p></div>`;
+  if(LANDING && LANDING.pending && !AUTH.landed) return `<div class="auth stack">${head}<div class="card"><h3>Signing you in…</h3><p class="small muted">Finishing the link you tapped.</p></div></div>`;
+  if(m==='newPassword') return `<div class="auth stack">${head}${note}
+    <form id="newPassForm" class="stack card" novalidate><h3>Choose a new password</h3>${pwField('newPass1','new-password','New password (8 or more characters)')}<button class="btn primary block" type="submit">Save and continue</button></form></div>`;
+  if(m==='confirm') return `<div class="auth stack">${head}${note}
+    <div class="stack card"><h3>Confirm your email</h3>
+      <p style="margin:0">A confirmation link is on its way to <b>${e}</b>. Open that email and tap the link.</p>
+      <p class="small muted" style="margin:0">Then come back to this screen: it signs you in by itself. The sender is Supabase Auth; look in spam if nothing arrives within a minute.</p>
+      <button class="btn primary block" type="button" data-auth="continue">I have tapped the link</button>
+      <button class="btn block" type="button" data-auth="resend">Send the email again</button>
+      <button class="btn ghost block small" type="button" data-auth="mode" data-mode="create">Use a different address</button></div></div>`;
+  if(m==='forgot') return `<div class="auth stack">${head}${note}
+    <form id="forgotForm" class="stack card" novalidate><h3>Reset your password</h3><p class="small muted" style="margin:0">You get an email with a link. Tapping it opens this app on a screen where you choose a new password.</p>${emailField}<button class="btn primary block" type="submit">Email me a reset link</button></form>
+    <button class="btn ghost block" type="button" data-auth="mode" data-mode="signin">Back to sign in</button></div>`;
+  if(m==='forgotSent') return `<div class="auth stack">${head}${note}
+    <div class="stack card"><h3>Check your email</h3><p style="margin:0">If <b>${e}</b> has an account here, a reset link is on its way. Open it on this device.</p><p class="small muted" style="margin:0">Use the newest email if you asked more than once: each new link cancels the one before.</p></div>
+    <button class="btn block" type="button" data-auth="mode" data-mode="signin">Back to sign in</button></div>`;
+  if(m==='create') return `<div class="auth stack">${head}${note}
+    <form id="authForm" data-kind="create" class="stack card" novalidate><h3>Create the owner account</h3>
+      <p class="small muted" style="margin:0">One account owns this logbook. Use an address whose mail you can open now: a confirmation link is sent to it.</p>
+      ${emailField}${pwField('authPass','new-password','Choose a password (8 or more characters)')}
+      <button class="btn primary block" type="submit">Create account</button></form>
+    <button class="btn ghost block" type="button" data-auth="mode" data-mode="signin">I already have an account</button></div>`;
+  return `<div class="auth stack">${head}${note}
+    <form id="authForm" data-kind="signin" class="stack card" novalidate><h3>Sign in</h3>
+      ${emailField}${pwField('authPass','current-password','Password')}
       <button class="btn primary block" type="submit">Sign in</button>
-      <button class="btn block" type="button" data-auth="signup">Create account</button>
-      <button class="btn ghost block" type="button" data-auth="reset">Forgot password</button>
-      <p class="small" id="authMsg" role="alert"></p>
-    </form>
-    <p class="small muted">Your records are private to your account. This app accepts one owner account; further sign-ups are closed.</p>
-  </div>`; }
-const authMsg = m => { const el=$('#authMsg'); if(el) el.textContent=m; };
-async function authSubmit(mode){
-  const email=$('#authEmail').value.trim(), password=$('#authPass').value;
-  if(!email) return authMsg('Enter your email address.');
-  if(mode==='reset'){ busy('Sending…'); const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:SITE_URL}); busy(null); return authMsg(error ? error.message : 'If that address has an account, a reset link is on its way.'); }
-  if(password.length<8) return authMsg('The password needs at least 8 characters.');
-  if(mode==='signup'){
-    busy('Creating account…'); const {data,error}=await sb.auth.signUp({email,password,options:{emailRedirectTo:SITE_URL}}); busy(null);
-    if(error) return authMsg(/database error|closed/i.test(error.message) ? 'Sign-ups are closed: this app already has its owner account. Sign in instead.' : error.message);
-    return authMsg(data.session ? 'Account created.' : 'Account created. Open the confirmation email from Supabase and tap the link, then come back here and sign in.');
+      <button class="btn ghost block small" type="button" data-auth="mode" data-mode="forgot">Forgot password?</button></form>
+    ${AUTH.ownerClaimed===true ? '<p class="small muted">This logbook already has its owner account, so new sign-ups are closed. You stay signed in on this device until you sign out.</p>'
+      : `<button class="btn block" type="button" data-auth="mode" data-mode="create">${AUTH.ownerClaimed===false?'First time here? Create the owner account':'Create account'}</button>`}
+  </div>`;
+}
+function authNote(msg, kind='warn'){ AUTH.msg=msg; AUTH.msgKind=kind; const el=$('#authMsg'); if(el){ el.className = msg ? 'banner '+(kind==='ok'?'info':'warn') : ''; el.textContent=msg; } }
+function authErrorText(error){
+  const c=String(error.code||''), m=String(error.message||error);
+  if(isNetErr(error)) return 'No connection. Check your signal and try again.';
+  if(c==='invalid_credentials' || /invalid login credentials/i.test(m)) return 'That email and password do not match.';
+  const wait=m.match(/after (\d+) seconds?/i); if(wait) return `Wait ${wait[1]} seconds before asking for another email.`;
+  if(c==='over_email_send_rate_limit' || /rate limit/i.test(m)) return 'Too many emails were requested. The mail service allows only a few an hour: wait a while, then try again.';
+  if(c==='weak_password' || /password should/i.test(m)) return 'Choose a stronger password of at least 8 characters.';
+  if(c==='same_password') return 'That is your current password. Choose a different one.';
+  if(c==='user_already_exists' || /already registered/i.test(m)) return 'That address already has an account. Sign in instead.';
+  if(/database error|sign-?ups? (are|not)/i.test(m)) return 'This logbook already has its owner account, so new sign-ups are closed. Sign in instead.';
+  if(c==='otp_expired' || /link is invalid|has expired/i.test(m)) return 'That email link has expired or was already used. Ask for a new one.';
+  if(c==='email_address_invalid' || c==='email_address_not_authorized' || /email address.*(invalid|not authorized)/i.test(m)) return 'The mail service refused that address. Check the spelling, or use another address.';
+  return m;
+}
+const emailOk = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+function setAuthMode(mode){ const el=$('#authEmail'); if(el) AUTH.email=el.value.trim(); if(mode!=='confirm') AUTH.pending=null; AUTH.mode=mode; AUTH.msg=''; render(); const f=$('#authEmail'); if(f && !f.value) f.focus(); }
+// Returns true when signed in. An unconfirmed address moves to the confirm screen rather than showing an error.
+async function authSignIn(email, password, {quiet=false}={}){
+  AUTH.lastTry=Date.now();
+  const {error}=await sb.auth.signInWithPassword({email,password});
+  if(!error){ ls.set('dalog.email',email); AUTH.pending=null; AUTH.mode='signin'; AUTH.msg=''; return true; }
+  if(error.code==='email_not_confirmed' || /not confirmed/i.test(error.message||'')){
+    AUTH.pending={email,password}; AUTH.email=email;
+    if(AUTH.mode!=='confirm'){ AUTH.mode='confirm'; AUTH.msg=''; render(); }
+    else if(!quiet) authNote('Not confirmed yet. Tap the link in the email, then come back.');
+    return false;
   }
-  busy('Signing in…'); const {error}=await sb.auth.signInWithPassword({email,password}); busy(null);
-  if(error) authMsg(/not confirmed/i.test(error.message) ? 'Confirm your email first: tap the link in the message from Supabase, then sign in.' : error.message);
+  if(!quiet) authNote(authErrorText(error));
+  return false;
+}
+FORMS.authForm = async form => {
+  const email=$('#authEmail').value.trim().toLowerCase(), password=$('#authPass').value; AUTH.email=email;
+  if(!emailOk(email)) return authNote('Enter your email address.');
+  if(form.dataset.kind==='create'){
+    if(password.length<8) return authNote('Choose a password of at least 8 characters.');
+    busy('Creating your account…'); let res; try { res=await sb.auth.signUp({email,password,options:{emailRedirectTo:SITE_URL}}); } finally { busy(null); }
+    if(res.error) return authNote(authErrorText(res.error));
+    ls.set('dalog.email',email);
+    if(res.data.session) return;                                   // no confirmation needed: the session event takes it from here
+    if(res.data.user && Array.isArray(res.data.user.identities) && res.data.user.identities.length===0){ AUTH.mode='signin'; render(); return authNote('That address already has an account. Sign in instead.'); }
+    AUTH.pending={email,password}; AUTH.mode='confirm'; AUTH.msg=''; AUTH.resendAt=Date.now()+60000; render(); return;
+  }
+  if(!password) return authNote('Enter your password.');
+  busy('Signing in…'); try { await authSignIn(email,password); } finally { busy(null); }
+};
+FORMS.forgotForm = async () => {
+  const email=$('#authEmail').value.trim().toLowerCase(); AUTH.email=email; if(!emailOk(email)) return authNote('Enter your email address.');
+  busy('Sending…'); let res; try { res=await sb.auth.resetPasswordForEmail(email,{redirectTo:SITE_URL}); } finally { busy(null); }
+  if(res.error) return authNote(authErrorText(res.error));
+  AUTH.mode='forgotSent'; AUTH.msg=''; render();
+};
+FORMS.newPassForm = async () => {
+  const p=$('#newPass1').value; if(p.length<8) return authNote('Choose a password of at least 8 characters.');
+  busy('Saving…'); let res; try { res=await sb.auth.updateUser({password:p}); } finally { busy(null); }
+  if(res.error) return authNote(authErrorText(res.error));
+  AUTH.mode='signin'; AUTH.msg=''; toast('Password changed. You are signed in.', 4000); if(location.hash!=='#home') location.hash='#home'; else render();
+};
+const AUTH_ACTIONS = {
+  mode: b => setAuthMode(b.dataset.mode),
+  togglePw: b => { const inp=b.parentElement.querySelector('input'); const show=inp.type==='password'; inp.type=show?'text':'password'; b.textContent=show?'Hide':'Show'; b.setAttribute('aria-pressed',String(show)); b.setAttribute('aria-label',show?'Hide password':'Show password'); },
+  continue: async () => { if(!AUTH.pending) return setAuthMode('signin'); busy('Checking…'); try { await authSignIn(AUTH.pending.email, AUTH.pending.password); } finally { busy(null); } },
+  resend: async () => {
+    const left=Math.ceil((AUTH.resendAt-Date.now())/1000); if(left>0) return authNote(`Wait ${left} seconds before asking for another email.`);
+    busy('Sending…'); let res; try { res=await sb.auth.resend({type:'signup', email:AUTH.email, options:{emailRedirectTo:SITE_URL}}); } finally { busy(null); }
+    if(res.error) return authNote(authErrorText(res.error));
+    AUTH.resendAt=Date.now()+60000; authNote('Sent again. Use the newest email: the earlier link no longer works.','ok');
+  }
+};
+// Coming back to the app after tapping the link (from the mail app or another tab) finishes the sign-in without a tap.
+function resumeConfirm(){ if(document.hidden || S.user || AUTH.mode!=='confirm' || !AUTH.pending || Date.now()-AUTH.lastTry<4000) return; once('auth', ()=>authSignIn(AUTH.pending.email, AUTH.pending.password, {quiet:true})).catch(()=>{}); }
+document.addEventListener('visibilitychange', resumeConfirm); window.addEventListener('focus', resumeConfirm);
+// Is the owner account taken? One public yes/no, used only to decide whether "Create account" is offered.
+async function loadOwnerStatus(){
+  if(S.user || !navigator.onLine) return;
+  try{ const {data,error}=await sb.from('app_status').select('owner_claimed').maybeSingle(); if(error || !data) return;
+    const first = AUTH.ownerClaimed===null; AUTH.ownerClaimed=!!data.owner_claimed;
+    if(S.user || !['signin','create'].includes(AUTH.mode)) return;
+    if(first && !AUTH.ownerClaimed && AUTH.mode==='signin' && !AUTH.msg && !typing()) AUTH.mode='create';      // nobody has registered yet: lead with Create
+    if(AUTH.ownerClaimed && AUTH.mode==='create' && !typing()) AUTH.mode='signin';
+    if(!typing()) render();
+  }catch(e){}
 }
 // Never await Supabase calls inside this callback (the client holds its auth lock while it runs): defer the work.
 sb.auth.onAuthStateChange((ev, session)=>{ setTimeout(()=>onAuth(ev, session).catch(e=>console.error(e)), 0); });
@@ -253,10 +363,19 @@ let bootedFor=null, authSeen=false;
 const typing = () => { const a=document.activeElement; return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
 async function onAuth(ev, session){
   const user = session ? session.user : null;
-  if(!user){ const changed = !!S.user || !authSeen; authSeen=true; S.user=null; bootedFor=null; S.ready=false; if(changed) render(); return; }
-  authSeen=true; S.user=user;
-  if(bootedFor!==user.id){ bootedFor=user.id; loadRefsFromCache(); render(); await bootstrap(); if(!typing()) render(); }
-  if(ev==='PASSWORD_RECOVERY'){ go('settings'); toast('Set a new password under Account', 5000); }
+  if(!user){
+    const changed = !!S.user || !authSeen; authSeen=true; S.user=null; bootedFor=null; S.ready=false;
+    if(LANDING && LANDING.pending && !AUTH.landed){ AUTH.landed=true; authNote('That link could not sign you in. Sign in with your password instead.'); render(); }
+    else if(changed){ if(AUTH.mode==='newPassword') AUTH.mode='signin'; render(); }
+    loadOwnerStatus(); return;
+  }
+  authSeen=true; AUTH.landed=true; S.user=user;
+  if(ev==='PASSWORD_RECOVERY'){ AUTH.mode='newPassword'; AUTH.msg=''; }
+  if(bootedFor!==user.id){
+    bootedFor=user.id; if(user.email) ls.set('dalog.email', user.email); AUTH.pending=null;
+    loadRefsFromCache(); render(); await bootstrap(); if(!typing()) render();
+    if(LANDING && LANDING.pending && LANDING.type==='signup') toast('Email confirmed. You are signed in.', 4500);
+  } else if(ev==='PASSWORD_RECOVERY') render();
 }
 async function bootstrap(){
   try{ await loadRefs(); await flush(); await loadActive(); await loadLog(); }
@@ -274,7 +393,8 @@ function renderHome(){
   const today=localDate(); const tt=S.log.trips.filter(x=>x.trip_date===today&&x.status==='complete'&&x.trip_type==='work'); const tk=S.log.tasks.filter(x=>localDate(x.started_at)===today&&x.status==='complete');
   const tkm=tt.reduce((s,x)=>s+Number(tripKm(x)||0),0);
   const tms=tk.reduce((s,x)=>s+(new Date(x.ended_at||x.started_at)-new Date(x.started_at)),0);
-  const setup = !S.vehicle || !S.taxYears.length;
+  const steps=[['Vehicle and its value', !!(S.vehicle && S.vehicle.value_rands!=null)], ['Tax year and opening odometer', S.taxYears.some(y=>y.opening_km!=null)], ['Home and the municipal offices as named places', ['home','municipal_offices'].every(pt=>S.places.some(p=>p.place_type===pt))]];
+  const todo=steps.filter(s=>!s[1]).length;
   let tripCard='';
   if(t && t.ended_at){
     tripCard=`<div class="card active-card ${h(t.trip_type)}"><div class="row"><span class="pill ${h(t.trip_type)}">${t.trip_type==='work'?'Work trip':'Personal trip'}</span><span class="small muted">${fmtTime(t.started_at)}–${fmtTime(t.ended_at)} · ${t.routed_km!=null?fmtKm(t.routed_km)+' km measured':'distance not measured'}</span></div>
@@ -287,7 +407,7 @@ function renderHome(){
   }
   $('#main').innerHTML=`<div class="stack">
     ${failed?`<div class="banner danger">${failed} change${failed>1?'s':''} could not be saved to the server. <a href="#settings">See Settings → Sync</a>.</div>`:''}
-    ${setup&&S.ready?`<div class="banner warn">Set up your <a href="#settings">vehicle and tax year</a>: the SARS export needs the vehicle value and an opening odometer reading. Trips you log before then are kept.</div>`:''}
+    ${todo&&S.ready?`<div class="card stack"><h2>Finish setting up · ${steps.length-todo} of ${steps.length} done</h2><div class="list">${steps.map(([l,ok])=>`<div class="item"><span aria-hidden="true">${ok?'✓':'○'}</span><span class="grow ${ok?'muted':''}">${h(l)}${ok?' — done':''}</span></div>`).join('')}</div><a class="btn block" href="#settings">Open Settings</a><p class="small muted" style="margin:0">You can log trips and tasks straight away. The SARS export and commute detection need these.</p></div>`:''}
     ${tripCard}
     ${k?`<div class="card active-card task"><div class="row"><span class="pill task">${h(catName(k.category_id))}</span><span class="small muted">${h(k.title||'')}${k.ward?' · '+h(k.ward):''} · ${(k._evidence||[]).length} evidence</span></div>
       <div class="timer" data-since="${h(k.started_at)}" style="margin:10px 0">00:00:00</div>
@@ -327,7 +447,7 @@ const ACTIONS = {
   reloadLog: async () => { busy('Loading…'); try{ await flush(); await loadLog(); } finally { busy(null); } render(); },
   addPlace: b => addPlaceHere(b.dataset.type),
   delPlace: async b => { await write({type:'delete',table:'places',id:b.dataset.id}); S.places=S.places.filter(p=>p.id!==b.dataset.id); render(); },
-  signOut: async () => { const c=$('#confirmSignOut'); if(ls.get(OUTBOX,[]).length && !(c && c.checked)){ render(); return toast('Unsynced changes would be lost. Tick the box to sign out anyway.', 5000); } await sb.auth.signOut(); for(const k of ['dalog.refs','dalog.logcache','dalog.activeTrip','dalog.activeTask',OUTBOX,FAILED]) ls.del(k); S.activeTrip=null; S.activeTask=null; S.log={trips:[],tasks:[],expenses:[],evidence:[]}; },
+  signOut: async () => { const c=$('#confirmSignOut'); if(ls.get(OUTBOX,[]).length && !(c && c.checked)){ render(); return toast('Unsynced changes would be lost. Tick the box to sign out anyway.', 5000); } await sb.auth.signOut(); for(const k of ['dalog.refs','dalog.logcache','dalog.activeTrip','dalog.activeTask',OUTBOX,FAILED]) ls.del(k); S.activeTrip=null; S.activeTask=null; S.log={trips:[],tasks:[],expenses:[],evidence:[]}; AUTH.mode='signin'; AUTH.msg=''; AUTH.pending=null; AUTH.email=ls.get('dalog.email',''); if(location.hash && location.hash!=='#home') location.hash='#home'; },
   assignTrips: async () => { const {error,count}=await sb.from('trips').update({vehicle_id:S.vehicle.id},{count:'exact'}).is('vehicle_id',null); if(error) throw error; toast(`Attached ${count||0} trip${count===1?'':'s'} to ${S.vehicle.name}`); await loadLog(); },
   retryFailed: async () => { const f=ls.get(FAILED,[]); ls.set(FAILED,[]); const q=ls.get(OUTBOX,[]); ls.set(OUTBOX,[...f.map(x=>({...x.op,tries:0})), ...q]); await flush(); render(); },
   clearFailed: () => { if(!$('#confirmClear').checked) return toast('Tick the box to discard these changes'); ls.set(FAILED,[]); render(); },
@@ -341,13 +461,11 @@ const ACTIONS = {
 const inFlight = new Set();
 async function once(key, fn){ if(inFlight.has(key)) return; inFlight.add(key); try { await fn(); } finally { inFlight.delete(key); } }
 document.addEventListener('click', guard(async e=>{
-  const a=e.target.closest('[data-auth]'); if(a) return once('auth', ()=>authSubmit(a.dataset.auth));
+  const a=e.target.closest('[data-auth]'); if(a){ const f=AUTH_ACTIONS[a.dataset.auth]; if(f) await (a.dataset.auth==='togglePw' ? f(a) : once('auth', ()=>f(a))); return; }
   const b=e.target.closest('[data-action]'); if(!b || b.disabled) return;
   const fn=ACTIONS[b.dataset.action]; if(fn) await once('a:'+b.dataset.action, ()=>fn(b));
 }));
-const FORMS = {};   // form id -> submit handler, registered below
-document.addEventListener('submit', guard(async e=>{ e.preventDefault(); const fn=FORMS[e.target.id]; if(fn) await once('f:'+e.target.id, ()=>fn(e.target)); }));
-FORMS.authForm = () => authSubmit('signin');
+document.addEventListener('submit', guard(async e=>{ e.preventDefault(); const fn=FORMS[e.target.id]; if(fn) await once(/^(authForm|forgotForm|newPassForm)$/.test(e.target.id)?'auth':'f:'+e.target.id, ()=>fn(e.target)); }));
 
 // ====================================================================
 // TRIPS
@@ -873,5 +991,6 @@ function closeSheet(){ const a=$('#scrim'), b=$('#sheet'); if(a) a.remove(); if(
 // ====================================================================
 renderSync();
 try{ if(navigator.serviceWorker && (location.protocol==='https:' || location.hostname==='localhost')) navigator.serviceWorker.register('./sw.js').catch(()=>{}); }catch(e){}
-// onAuthStateChange delivers INITIAL_SESSION (signed in or not); this covers the case where it is slow to arrive.
-setTimeout(()=>{ if(!S.user && $('#main').textContent.trim()==='Loading…') render(); }, 1500);
+// onAuthStateChange delivers INITIAL_SESSION (signed in or not); these cover the cases where it is slow or never arrives.
+setTimeout(()=>{ if(!S.user && $('#main').textContent.trim()==='Loading…'){ render(); loadOwnerStatus(); } }, 1500);
+setTimeout(()=>{ if(!S.user && LANDING && LANDING.pending && !AUTH.landed){ AUTH.landed=true; authNote('That link could not sign you in. Sign in with your password instead.'); render(); } }, 8000);

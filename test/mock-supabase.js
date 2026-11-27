@@ -2,7 +2,9 @@
 // The app runs the REAL supabase-js client against this, so auth-lock, header and query-shape bugs surface.
 const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 
-function createMock({ confirmEmail = false } = {}) {
+// confirmEmail: sign-up returns no session until state.confirmed is set (as when the emailed link is tapped).
+// ownerClaimed: true / false, or null for "the app cannot tell" (no row). existingEmails: addresses that already have an account.
+function createMock({ confirmEmail = false, ownerClaimed = true, existingEmails = [], signupLocked = false } = {}) {
   const user = { id: '11111111-1111-4111-8111-111111111111', aud: 'authenticated', role: 'authenticated', email: 'test@example.com', app_metadata: { provider: 'email' }, user_metadata: {}, created_at: new Date().toISOString() };
   const store = {
     vehicles: [], tax_years: [], places: [], trips: [], task_sessions: [], evidence: [], expenses: [],
@@ -14,9 +16,10 @@ function createMock({ confirmEmail = false } = {}) {
       { year_label: '2026/27', starts_on: '2026-03-01', ends_on: '2027-02-28', prescribed_rate_c_per_km: 495, source: 'test' },
       { year_label: '2025/26', starts_on: '2025-03-01', ends_on: '2026-02-28', prescribed_rate_c_per_km: 476, source: 'test' },
     ],
+    app_status: ownerClaimed === null ? [] : [{ id: true, owner_claimed: ownerClaimed }],
   };
   const log = [];            // every request: {method, path, query, body, status}
-  const state = { offline: false, failNext: null, uploads: [] };
+  const state = { offline: false, failNext: null, uploads: [], confirmed: true, signupLocked, signups: [], resends: 0, recoveries: [], passwordSet: null };
 
   const session = () => {
     const exp = Math.floor(Date.now() / 1000) + 3600;
@@ -81,13 +84,26 @@ function createMock({ confirmEmail = false } = {}) {
 
     // ---- auth ----
     if (path === '/auth/v1/token') {
-      if (url.searchParams.get('grant_type') === 'password') { if (body.password === 'wrong-password') return send(400, { code: 400, error_code: 'invalid_credentials', msg: 'Invalid login credentials' }); return send(200, session()); }
+      if (url.searchParams.get('grant_type') === 'password') {
+        if (body.password === 'wrong-password') return send(400, { code: 400, error_code: 'invalid_credentials', msg: 'Invalid login credentials' });
+        if (!state.confirmed) return send(400, { code: 400, error_code: 'email_not_confirmed', msg: 'Email not confirmed' });
+        return send(200, session());
+      }
       return send(200, session());
     }
-    if (path === '/auth/v1/signup') return confirmEmail ? send(200, { ...user, confirmation_sent_at: new Date().toISOString() }) : send(200, session());
-    if (path === '/auth/v1/user') return send(200, user);
+    if (path === '/auth/v1/signup') {
+      state.signups.push(body.email);
+      if (state.signupLocked) return send(500, { code: 500, error_code: 'unexpected_failure', msg: 'Database error saving new user' });
+      // an address that already has an account gets a look-alike reply with no identities (the real service does this to avoid revealing accounts)
+      if (existingEmails.includes(body.email)) return send(200, { ...user, id: '99999999-9999-4999-8999-999999999999', email: body.email, identities: [], confirmation_sent_at: new Date().toISOString() });
+      if (!confirmEmail) { state.confirmed = true; return send(200, session()); }
+      state.confirmed = false;
+      return send(200, { ...user, email: body.email, identities: [{ identity_id: 'i1', provider: 'email' }], confirmation_sent_at: new Date().toISOString() });
+    }
+    if (path === '/auth/v1/resend') { state.resends++; return send(200, {}); }
+    if (path === '/auth/v1/user') { if (method === 'PUT') { state.passwordSet = body.password; return send(200, user); } return send(200, user); }
     if (path === '/auth/v1/logout') return send(204);
-    if (path === '/auth/v1/recover') return send(200, {});
+    if (path === '/auth/v1/recover') { state.recoveries.push(body.email); return send(200, {}); }
 
     // ---- storage ----
     if (path.startsWith('/storage/v1/object/sign/')) return send(200, { signedURL: '/object/sign/evidence/x?token=t' });
@@ -147,6 +163,6 @@ function createMock({ confirmEmail = false } = {}) {
     } catch (e) { return send(400, { code: 'MOCK', message: e.message }); }
     return send(405, { message: 'mock: method' });
   }
-  return { handle, store, log, state, user };
+  return { handle, store, log, state, user, session };
 }
 module.exports = { createMock };

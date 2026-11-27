@@ -15,8 +15,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await new Promise(r => server.listen(0, '127.0.0.1', r)); const BASE = `http://localhost:${server.address().port}/`;
   const browser = await chromium.launch();
 
-  async function session({ sw = 'block', scheme = 'light' } = {}) {
-    const mock = createMock();
+  async function session({ sw = 'block', scheme = 'light', mockOpts = {} } = {}) {
+    const mock = createMock(mockOpts);
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme: scheme, serviceWorkers: sw, acceptDownloads: true,
       geolocation: { latitude: -26.7145, longitude: 27.0973 }, permissions: ['geolocation'], timezoneId: 'Africa/Johannesburg', locale: 'en-ZA' });
     const page = await ctx.newPage(); const errors = []; const stray = [];
@@ -43,9 +43,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const { mock, ctx, page, errors, stray, ui } = await session(); const st = mock.store;
     console.log('\nAuth');
     await page.goto(BASE); await page.waitForSelector('#authEmail');
-    check('sign-in screen renders, nav hidden', (await ui.text()).includes('Sign in to continue') && !(await page.isVisible('#nav')));
+    await ui.settle(600);
+    check('sign-in screen renders, nav hidden', (await page.textContent('#authForm h3')) === 'Sign in' && !(await page.isVisible('#nav')));
+    check('with an owner on record, Create account is not offered', /already has its owner account/.test(await ui.text()) && (await page.locator('[data-mode="create"]').count()) === 0, await ui.text());
     await page.fill('#authEmail', 'test@example.com'); await page.fill('#authPass', 'wrong-password'); await page.click('#authForm button[type=submit]'); await ui.settle(500);
-    check('wrong password shows the server message', /Invalid login credentials/.test(await page.textContent('#authMsg')), await page.textContent('#authMsg'));
+    check('wrong password gets a plain-language message', (await page.textContent('#authMsg')) === 'That email and password do not match.', await page.textContent('#authMsg'));
+    await page.click('[data-auth="togglePw"]');
+    check('Show reveals the password without clearing it', (await page.getAttribute('#authPass', 'type')) === 'text' && (await page.inputValue('#authPass')) === 'wrong-password' && (await page.textContent('[data-auth="togglePw"]')) === 'Hide');
     await page.fill('#authPass', 'correct-horse'); await page.click('#authForm button[type=submit]'); await page.waitForSelector('[data-action="startTrip"]', { timeout: 8000 });
     check('sign-in reaches Home with the real client library', (await ui.text()).includes('Start work trip'));
 
@@ -194,6 +198,80 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check('no script errors or blocked resources during the whole run', errors.length === 0, errors.join(' | '));
     check('no requests to any host other than the app, Supabase, OSRM and Nominatim', stray.length === 0, stray.join(', '));
     await ctx.close();
+  }
+
+  // =================================================================== account flows
+  {
+    console.log('\nCreate account: confirm by email, then signed in without another tap');
+    const { mock, ctx, page, errors, ui } = await session({ mockOpts: { ownerClaimed: false, confirmEmail: true } });
+    await page.goto(BASE); await page.waitForSelector('#authForm[data-kind="create"]', { timeout: 6000 });
+    check('with no owner yet the app opens on Create the owner account', (await page.textContent('#authForm h3')) === 'Create the owner account');
+    await page.fill('#authEmail', 'New.Owner@Example.com'); await page.fill('#authPass', 'short'); await page.click('#authForm button[type=submit]'); await ui.settle(300);
+    check('a short password is refused before anything is sent', /at least 8 characters/.test(await page.textContent('#authMsg')) && mock.state.signups.length === 0);
+    await page.fill('#authPass', 'correct-horse'); await page.click('#authForm button[type=submit]'); await page.waitForSelector('[data-auth="continue"]');
+    check('after sign-up: a Confirm your email screen naming the address', /Confirm your email/.test(await ui.text()) && /new\.owner@example\.com/.test(await ui.text()) && mock.state.signups[0] === 'new.owner@example.com', await ui.text());
+    await page.click('[data-auth="continue"]'); await ui.settle(500);
+    check('continuing before tapping the link explains what is missing', /Not confirmed yet/.test(await page.textContent('#authMsg')) && (await page.isVisible('[data-auth="continue"]')), await page.textContent('#authMsg'));
+    await page.click('[data-auth="resend"]'); await ui.settle(200);
+    check('asking for the email again too soon gives the wait in seconds', /Wait \d+ seconds/.test(await page.textContent('#authMsg')) && mock.state.resends === 0, await page.textContent('#authMsg'));
+    await page.evaluate(() => { AUTH.resendAt = 0; }); await page.click('[data-auth="resend"]'); await ui.settle(400);
+    check('the email can be sent again once the wait is over', mock.state.resends === 1 && /Sent again/.test(await page.textContent('#authMsg')));
+    await page.evaluate(() => { AUTH.resendAt = 0; }); mock.state.failNext = { path: '/auth/v1/resend', status: 429, json: { code: 429, error_code: 'over_email_send_rate_limit', msg: 'email rate limit exceeded' } };
+    await page.click('[data-auth="resend"]'); await ui.settle(400);
+    check('the mail service\'s hourly limit is explained in plain words', /only a few an hour/.test(await page.textContent('#authMsg')), await page.textContent('#authMsg'));
+    mock.state.confirmed = true;                                                   // the link is tapped (in the mail app, another tab, another device)
+    await page.waitForTimeout(4200); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.waitForSelector('[data-action="startTrip"]', { timeout: 6000 });
+    check('returning to the app after confirming signs in by itself', (await ui.text()).includes('Start work trip'));
+    await page.waitForFunction(() => /Finish setting up/.test(document.querySelector('#main').textContent), null, { timeout: 6000 }).catch(() => {});   // drawn once the first data load finishes
+    check('Home starts with a setup checklist', /Finish setting up · 0 of 3 done/.test(await ui.text()), (await ui.text()).slice(0, 120));
+    const stored = await page.evaluate(() => Object.keys(localStorage).map(k => localStorage.getItem(k)).join('\n'));
+    check('the password is never written to the phone; the email is remembered', !stored.includes('correct-horse') && (await ui.ls('dalog.email')) === 'test@example.com');
+    check('no script errors in the create-account flow', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+  }
+  {
+    console.log('Sign-up edge cases');
+    let s = await session({ mockOpts: { ownerClaimed: null, signupLocked: true } });
+    await s.page.goto(BASE); await s.page.waitForSelector('#authEmail'); await s.ui.settle(600);
+    check('when the app cannot tell, a plain Create account button is shown', (await s.page.textContent('[data-mode="create"]')) === 'Create account');
+    await s.page.click('[data-mode="create"]'); await s.page.fill('#authEmail', 'late@example.com'); await s.page.fill('#authPass', 'correct-horse'); await s.page.click('#authForm button[type=submit]'); await s.ui.settle(500);
+    check('a sign-up the server refuses says sign-ups are closed', /new sign-ups are closed/.test(await s.page.textContent('#authMsg')), await s.page.textContent('#authMsg'));
+    await s.ctx.close();
+    s = await session({ mockOpts: { ownerClaimed: false, confirmEmail: true, existingEmails: ['test@example.com'] } });
+    await s.page.goto(BASE); await s.page.waitForSelector('#authForm[data-kind="create"]'); await s.page.fill('#authEmail', 'test@example.com'); await s.page.fill('#authPass', 'correct-horse'); await s.page.click('#authForm button[type=submit]'); await s.ui.settle(500);
+    check('signing up with an address that already has an account leads to Sign in', (await s.page.textContent('#authForm h3')) === 'Sign in' && /already has an account/.test(await s.page.textContent('#authMsg')) && (await s.page.inputValue('#authEmail')) === 'test@example.com');
+    await s.ctx.close();
+  }
+  {
+    console.log('Email links that open the app');
+    let s = await session({ mockOpts: { ownerClaimed: true } }); let tok = s.mock.session();
+    await s.page.goto(BASE + `#access_token=${tok.access_token}&expires_in=3600&refresh_token=${tok.refresh_token}&token_type=bearer&type=signup`);
+    await s.page.waitForSelector('[data-action="startTrip"]', { timeout: 8000 }); await s.ui.settle(300);
+    check('a confirmation link that lands on the app signs in directly', (await s.ui.text()).includes('Start work trip') && !/access_token/.test(s.page.url()), s.page.url());
+    await s.ctx.close();
+
+    s = await session({ mockOpts: { ownerClaimed: true } }); tok = s.mock.session();
+    await s.page.goto(BASE + `#access_token=${tok.access_token}&expires_in=3600&refresh_token=${tok.refresh_token}&token_type=bearer&type=recovery`);
+    await s.page.waitForSelector('#newPassForm', { timeout: 8000 });
+    check('a reset link opens on Choose a new password, with the app hidden behind it', (await s.page.textContent('#newPassForm h3')) === 'Choose a new password' && !(await s.page.isVisible('#nav')));
+    await s.page.fill('#newPass1', 'short'); await s.page.click('#newPassForm button[type=submit]'); await s.ui.settle(300);
+    check('the new password must be 8 or more characters', /at least 8 characters/.test(await s.page.textContent('#authMsg')) && s.mock.state.passwordSet === null);
+    await s.page.fill('#newPass1', 'brand-new-secret'); await s.page.click('#newPassForm button[type=submit]'); await s.page.waitForSelector('[data-action="startTrip"]', { timeout: 6000 });
+    check('saving it goes straight to Home, signed in', s.mock.state.passwordSet === 'brand-new-secret' && (await s.page.isVisible('#nav')));
+    await s.ctx.close();
+
+    s = await session({ mockOpts: { ownerClaimed: true } });
+    await s.page.goto(BASE + '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired'); await s.page.waitForSelector('#authEmail'); await s.ui.settle(500);
+    check('an expired or used link shows a clear message on the sign-in screen', /expired or was already used/.test(await s.page.textContent('#authMsg')) && (await s.page.textContent('#authForm h3')) === 'Sign in', await s.page.textContent('#authMsg'));
+    check('the error is removed from the address', !/error/.test(s.page.url()), s.page.url());
+    console.log('Forgot password');
+    await s.page.click('[data-mode="forgot"]'); await s.page.waitForSelector('#forgotForm'); await s.page.fill('#authEmail', 'test@example.com'); await s.page.click('#forgotForm button[type=submit]'); await s.ui.settle(500);
+    check('Forgot password sends one request and shows Check your email', s.mock.state.recoveries.length === 1 && /Check your email/.test(await s.ui.text()) && /test@example\.com/.test(await s.ui.text()));
+    await s.page.click('[data-mode="signin"]'); await s.page.waitForSelector('#authForm');
+    check('back on Sign in the email is still filled in', (await s.page.inputValue('#authEmail')) === 'test@example.com');
+    check('no script errors in the link and reset flows', s.errors.length === 0, s.errors.join(' | '));
+    await s.ctx.close();
   }
 
   // =================================================================== server refusal is surfaced, not swallowed
